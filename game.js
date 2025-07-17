@@ -1,12 +1,10 @@
 /* --------------------------------------------------
- * Bullet Hell MVP (Mobile Touch Build v1.1)
+ * Bullet Hell MVP (Mobile Touch Build v1.2)
  * --------------------------------------------------
  * PC: WASD / Arrow keys.
  * Mobile: 왼쪽 화면 터치 & 드래그 = 가상 스틱 이동.
- * Enter/Return (키보드) = Game Over 화면에서 메뉴 복귀.
- * 회전 힌트: portrait 상태에선 화면 회전 권장 메시지 표시(rotate-hint 엘리먼트 필요).
- * 스크롤/줌 차단: 기본 터치 이벤트 preventDefault.
- * Easy/Hard 로직 유지 + 모바일 난이도용 파라미터 적용.
+ * Enter/Return = Game Over 화면에서 메뉴 복귀.
+ * 플레이 중엔 타이틀 숨김; 메뉴/게임오버 시 표시.
  * -------------------------------------------------- */
 'use strict';
 
@@ -41,9 +39,9 @@ const CONFIG = {
   outBuffer: 20,
   storageKey: 'bh_best_score_v0',
   touch: {
-    maxRadius: 60,  // px joystick radius
-    deadZone: 8,    // px before movement engages
-    leftFrac: 0.6,  // left % of screen starts stick
+    maxRadius: 60,
+    deadZone: 8,
+    leftFrac: 0.6,
   }
 };
 
@@ -72,8 +70,12 @@ const bestScoreEl  = document.getElementById('best-score');
 const rotateHintEl = document.getElementById('rotate-hint');
 const touchStickEl = document.getElementById('touch-stick');
 const touchStickNub = touchStickEl ? touchStickEl.querySelector('.stick-nub') : null;
+const titleEl = document.getElementById('title');   // <-- NEW
 
-/* force logical pixel size (in case HTML attrs changed) */
+function showTitle(){ if(titleEl) titleEl.style.display='block'; }
+function hideTitle(){ if(titleEl) titleEl.style.display='none'; }
+
+/* force logical pixel size (safety) */
 canvas.width  = CONFIG.canvas.w;
 canvas.height = CONFIG.canvas.h;
 
@@ -120,12 +122,11 @@ const touchInput = {
 };
 
 function touchStart(e){
-  // allow UI buttons
-  if (e.target.closest('#menu') || e.target.closest('#gameover')) return;
-  if (e.changedTouches.length===0) return;
+  if(e.target.closest('#menu')||e.target.closest('#gameover')) return; // let UI buttons work
+  if(e.changedTouches.length===0) return;
   const t=e.changedTouches[0];
   const vw=window.innerWidth;
-  if (t.clientX > vw*CONFIG.touch.leftFrac) return; // only left region spawns stick
+  if(t.clientX>vw*CONFIG.touch.leftFrac) return; // only left side starts stick
   e.preventDefault();
   touchInput.active=true; touchInput.id=t.identifier;
   touchInput.baseX=t.clientX; touchInput.baseY=t.clientY;
@@ -184,7 +185,7 @@ window.addEventListener('touchmove',touchMove,{passive:false});
 window.addEventListener('touchend',touchEnd,{passive:false});
 window.addEventListener('touchcancel',touchEnd,{passive:false});
 
-/* kill pinch-zoom / double-tap zoom (best-effort) */
+/* kill pinch-zoom / double-tap zoom */
 document.addEventListener('gesturestart',e=>e.preventDefault());
 document.addEventListener('dblclick',e=>e.preventDefault());
 
@@ -224,10 +225,7 @@ class Player{
   update(dt){
     // keyboard vector
     let vx=0,vy=0;
-    if(keys.left)vx--;
-    if(keys.right)vx++;
-    if(keys.up)vy--;
-    if(keys.down)vy++;
+    if(keys.left)vx--; if(keys.right)vx++; if(keys.up)vy--; if(keys.down)vy++;
     if(vx||vy){
       const inv=1/Math.hypot(vx,vy); vx*=inv; vy*=inv;
     }else if(touchInput.active){
@@ -238,10 +236,8 @@ class Player{
       this.y+=vy*this.speed*dt;
     }
     // clamp
-    if(this.x<this.r)this.x=this.r;
-    if(this.x>CONFIG.canvas.w-this.r)this.x=CONFIG.canvas.w-this.r;
-    if(this.y<this.r)this.y=this.r;
-    if(this.y>CONFIG.canvas.h-this.r)this.y=CONFIG.canvas.h-this.r;
+    if(this.x<this.r)this.x=this.r; if(this.x>CONFIG.canvas.w-this.r)this.x=CONFIG.canvas.w-this.r;
+    if(this.y<this.r)this.y=this.r; if(this.y>CONFIG.canvas.h-this.r)this.y=CONFIG.canvas.h-this.r;
   }
   draw(){ ctx.fillStyle='#0f0'; ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill(); }
 }
@@ -321,8 +317,7 @@ function spawnBullets(dt){
   }
 }
 function emitBulletPattern(){
-  // NOTE: ring 패턴이 모바일에서 빡세면 ['edge','aim'] 로 줄여도 됨.
-  const patterns=(game.diff===Difficulty.EASY)?['edge','aim']:['edge','aim','ring'];
+  const patterns=(game.diff===Difficulty.EASY)?['edge','aim']:['edge','aim','ring']; // ring 제외하면 더 쉽다
   const p=choose(patterns);
   const speed=currentBulletSpeed();
   const r=CONFIG.bullet.radius;
@@ -348,7 +343,7 @@ function emitBulletPattern(){
     const vx=dx*inv*speed;
     const vy=dy*inv*speed;
     game.bullets.push(new Bullet(x,y,vx,vy,r));
-  } else { // ring
+  } else { // ring (Hard만)
     const cx=CONFIG.canvas.w/2, cy=CONFIG.canvas.h/2;
     const N=12;
     for(let i=0;i<N;i++){
@@ -432,7 +427,9 @@ function startGame(diff){
   game.hp=(diff===Difficulty.EASY)?3:1;
   scheduleNextBullet();
   scheduleNextLaser();
-  hideMenu(); hideGameOver();
+  hideMenu(); 
+  hideGameOver();
+  hideTitle();   // <-- NEW: hide title during play
   running=true;
   lastTime=performance.now();
   requestAnimationFrame(loop);
@@ -454,19 +451,24 @@ function endGame(){
 function returnToMenu(){
   game.mode=GameMode.MENU;
   running=false;
-  showMenu(); hideGameOver();
+  showMenu(); 
+  hideGameOver();
 }
 
 /* =========================
  * UI Helpers
  * ========================= */
-function showMenu(){ uiMenu.classList.remove('hidden'); }
+function showMenu(){ 
+  uiMenu.classList.remove('hidden'); 
+  showTitle();   // <-- NEW
+}
 function hideMenu(){ uiMenu.classList.add('hidden'); }
 function showGameOver(){
   finalScoreEl.textContent = `Score: ${game.score.toFixed(1)}s`;
   const best=(game.diff===Difficulty.EASY)?game.best.easy:game.best.hard;
   bestScoreEl.textContent = `Best: ${best.toFixed(1)}s`;
   uiGameOver.classList.remove('hidden');
+  showTitle();   // <-- NEW
 }
 function hideGameOver(){ uiGameOver.classList.add('hidden'); }
 
